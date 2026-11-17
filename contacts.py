@@ -23,11 +23,14 @@ class Contact:
     emails: tuple[str, ...] = ()
     socials: tuple[str, ...] = ()
     addresses: tuple[str, ...] = ()
+    favorite: bool = False
 
     def __post_init__(self):
         name = self.name.strip()
         if not name or len(name.splitlines()) != 1:
             raise ValueError("请输入单行姓名。")
+        if not isinstance(self.favorite, bool):
+            raise ValueError("收藏状态无效。")
         object.__setattr__(self, "name", name)
         for key, label in FIELDS:
             values = getattr(self, key)

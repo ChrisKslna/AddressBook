@@ -86,15 +86,22 @@ class AddressBook:
         self.edit_button.pack(side="left", padx=8)
         self.delete_button = ttk.Button(bar, text="删除", command=self.delete_contact)
         self.delete_button.pack(side="left")
+        self.favorite_button = ttk.Button(bar, text="收藏", command=self.toggle_favorite)
+        self.favorite_button.pack(side="left", padx=8)
+        self.favorites_only = tk.BooleanVar(value=False)
+        ttk.Radiobutton(bar, text="只看收藏", variable=self.favorites_only, value=True, command=self.change_filter).pack(side="right")
+        ttk.Radiobutton(bar, text="全部", variable=self.favorites_only, value=False, command=self.change_filter).pack(side="right", padx=(0, 12))
 
         content = ttk.Frame(page)
         content.grid(row=2, sticky="nsew")
         content.columnconfigure(0, weight=3)
         content.columnconfigure(2, weight=2)
         content.rowconfigure(0, weight=1)
-        self.tree = ttk.Treeview(content, columns=("name", "phone"), show="headings", selectmode="browse")
+        self.tree = ttk.Treeview(content, columns=("favorite", "name", "phone"), show="headings", selectmode="browse")
+        self.tree.heading("favorite", text="收藏")
         self.tree.heading("name", text="姓名")
         self.tree.heading("phone", text="主要电话")
+        self.tree.column("favorite", width=55, minwidth=50, stretch=False, anchor="center")
         self.tree.column("name", width=140, minwidth=75)
         self.tree.column("phone", width=135, minwidth=90)
         self.tree.grid(row=0, column=0, sticky="nsew")
@@ -124,28 +131,36 @@ class AddressBook:
         return self.visible.get(selected[0]) if selected else None
 
     def refresh(self, contact_id=None):
-        self.visible = {contact.id: contact for contact in self.store.contacts}
+        favorites_only = self.favorites_only.get()
+        self.visible = {
+            contact.id: contact for contact in self.store.contacts if not favorites_only or contact.favorite
+        }
         self.tree.delete(*self.tree.get_children())
         for contact in self.visible.values():
             phone = next(iter(contact.phones), "—")
-            self.tree.insert("", "end", iid=contact.id, values=(contact.name, phone))
+            self.tree.insert("", "end", iid=contact.id, values=("★" if contact.favorite else "", contact.name, phone))
         if contact_id in self.visible:
             self.tree.selection_set(contact_id)
             self.tree.focus(contact_id)
             self.tree.see(contact_id)
-        self.status.configure(text=f"共 {len(self.store.contacts)} 位联系人")
+        favorite_count = sum(contact.favorite for contact in self.store.contacts)
+        self.status.configure(text=f"全部 {len(self.store.contacts)} 位   ·   收藏 {favorite_count} 位")
         self.show_details()
 
     def show_details(self):
         contact = self.selected_contact()
-        for button in (self.edit_button, self.delete_button):
+        for button in (self.edit_button, self.delete_button, self.favorite_button):
             button.state(["!disabled"] if contact else ["disabled"])
+        self.favorite_button.configure(text="取消收藏" if contact and contact.favorite else "收藏")
         self.detail_title.configure(text=contact.name if contact else "联系人详情")
-        details = (
-            "\n\n".join(f"{label}\n" + ("\n".join(getattr(contact, field)) or "—") for field, label in FIELDS)
-            if contact
-            else "选择一位联系人查看详情。" if self.visible else "点击「新增联系人」添加第一位联系人。"
-        )
+        if contact:
+            details = "\n\n".join(f"{label}\n" + ("\n".join(getattr(contact, field)) or "—") for field, label in FIELDS)
+        elif self.visible:
+            details = "选择一位联系人查看详情。"
+        elif self.favorites_only.get():
+            details = "还没有收藏。切换到「全部」，选中联系人后点击「收藏」。"
+        else:
+            details = "点击「新增联系人」添加第一位联系人。"
         self.detail.configure(state="normal")
         self.detail.delete("1.0", "end")
         self.detail.insert("1.0", details)
@@ -155,8 +170,25 @@ class AddressBook:
         self.store.put(contact)
         self.refresh(contact.id)
 
+    def change_filter(self):
+        contact = self.selected_contact()
+        self.refresh(contact.id if contact else None)
+
+    def toggle_favorite(self):
+        contact = self.selected_contact()
+        if contact:
+            try:
+                self.save_contact(replace(contact, favorite=not contact.favorite))
+            except OSError as exc:
+                messagebox.showerror("无法更新收藏", str(exc), parent=self.root)
+
     def new_contact(self):
-        ContactEditor(self.root, None, self.save_contact)
+        def save_new(contact):
+            self.store.put(contact)
+            self.favorites_only.set(False)
+            self.refresh(contact.id)
+
+        ContactEditor(self.root, None, save_new)
 
     def edit_row(self, event):
         if self.tree.identify_row(event.y):
